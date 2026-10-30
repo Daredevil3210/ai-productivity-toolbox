@@ -1,249 +1,143 @@
-# AI 个人效率工具箱
+# AI Productivity Toolbox
 
-这是一个与《尚硅谷 LangChain 1.2》前五章学习进度匹配的综合练习项目。它使用模型、Message、提示词、Tools 和手动工具调用循环实现，不依赖 `create_agent`、记忆或 RAG。
+English | [简体中文](README.zh.md)
 
-项目可以完成以下任务：
+A Chinese-language command-line assistant that turns everyday requests into explicit LangChain tool calls. It combines arithmetic, dates, unit conversion, Open-Meteo weather, and a local to-do list while displaying the tools chosen by the model.
 
-- 安全计算数学表达式
-- 查询指定时区的日期和时间
-- 计算两个日期相差多少天
-- 换算长度、重量和温度单位
-- 查询实时天气及三日内预报
-- 新增、查看和完成本地待办事项
-- 在一个问题中自动组合多个工具
+Version `0.1.0` is a learning project aligned with the first five chapters of the 尚硅谷 LangChain 1.2 course. The assistant uses Models, Messages, prompts, and Tools through a hand-written call loop. It does not use `create_agent`, RAG, or a persistent conversation store.
 
-详细的设计说明、调用流程和源码导读见 [docs/PROJECT_GUIDE.md](docs/PROJECT_GUIDE.md)。
+## Tools and behavior
 
-## 1. 项目结构
+- `calculator`: parses arithmetic with Python's AST, allowing numbers, parentheses, and `+ - * / // % **`; it limits expression length, exponent size, and result magnitude.
+- `get_current_datetime`: reads the date and time in an IANA timezone, defaulting to `Asia/Shanghai`.
+- `days_between`: calculates the interval between two dates.
+- `convert_unit`: converts supported length, weight, and temperature units.
+- `get_weather`: queries Open-Meteo for current conditions and a one-to-three-day forecast, with city geocoding.
+- `add_todo`, `list_todos`, and `complete_todo`: create, filter, and complete items in local JSON storage.
 
-```text
-project1/
-├── main.py                    # 命令行入口
-├── toolbox/
-│   ├── __init__.py
-│   ├── assistant.py           # 手动工具调用循环
-│   ├── config.py              # .env 配置读取与校验
-│   ├── prompts.py             # System Prompt
-│   └── tools.py               # 所有工具及 args_schema
-├── data/
-│   └── .gitkeep               # todos.json 运行后自动产生
-├── tests/
-│   ├── test_config.py
-│   └── test_tools.py
-├── docs/
-│   └── PROJECT_GUIDE.md       # 整体与详细说明
-├── .env.example
-├── .gitignore
-├── requirements.txt
-├── requirements-dev.txt
-└── pyproject.toml
-```
+The assistant can combine several tools in one request and keeps messages in memory for follow-up questions. Tool errors are returned to the model as messages. A configurable round limit stops repeated tool calls.
 
-## 2. 环境准备
+## Requirements and installation
 
-推荐使用你现有的 Conda 环境：
+- Python **3.11 or later**, as declared in `pyproject.toml`.
+- A DeepSeek API account, or a running Ollama service with an installed model that supports tool calls.
+- Internet access for remote-model requests and Open-Meteo weather.
 
-```cmd
-conda activate langchain1.2
-cd /d D:\Project\project1
-pip install -r requirements.txt
-```
+The dependency file pins LangChain `1.2.12`, its core/provider packages, and supporting libraries. In PowerShell:
 
-如果不使用 Conda，也可以建立独立虚拟环境：
-
-```cmd
-cd /d D:\Project\project1
-python -m venv .venv
-.venv\Scripts\activate
+```powershell
+git clone https://github.com/Daredevil3210/ai-productivity-toolbox.git
+cd ai-productivity-toolbox
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
+Copy-Item .env.example .env
 ```
 
-## 3. 配置模型
+Copy the template only for initial setup; preserve an existing `.env` during updates. You can also activate an existing Conda environment and install `requirements.txt` from the repository root.
 
-先复制环境变量模板：
+## Model configuration
 
-```cmd
-copy .env.example .env
-```
+Edit the local `.env`:
 
-### 3.1 使用 DeepSeek
-
-编辑 `.env`：
-
-```env
+```dotenv
 MODEL_PROVIDER=deepseek
 MODEL_NAME=deepseek-v4-flash
-MODEL_API_KEY=你的API_KEY
+MODEL_API_KEY=replace_with_your_private_key
 MODEL_BASE_URL=https://api.deepseek.com
+MAX_TOOL_ROUNDS=6
+SHOW_TOOL_TRACE=true
 ```
 
-也可以继续使用课程项目中的变量名：
+`deepseek-v4-flash` is the configured identifier in the repository template, not a guarantee of availability. Select a model your account can access that supports tool calls. `DEEPSEEK_API_KEY` and `DEEPSEEK_BASE_URL` are accepted as fallback names. Settings are loaded from the project-root `.env` with precedence over existing environment values.
 
-```env
-MODEL_PROVIDER=deepseek
-MODEL_NAME=deepseek-v4-flash
-DEEPSEEK_API_KEY=你的API_KEY
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-```
+To use Ollama, replace the model settings with:
 
-不要把真实 `.env` 提交到 Git。项目的 `.gitignore` 已忽略该文件。
-
-### 3.2 使用 Ollama
-
-确认本地服务和模型可用：
-
-```cmd
-D:\ollama\ollama.exe list
-D:\ollama\ollama.exe run deepseek-r1:1.5b
-```
-
-然后将 `.env` 改为：
-
-```env
+```dotenv
 MODEL_PROVIDER=ollama
-MODEL_NAME=deepseek-r1:1.5b
+MODEL_NAME=replace_with_your_installed_tool_capable_model
 MODEL_BASE_URL=http://localhost:11434
 MAX_TOOL_ROUNDS=6
 SHOW_TOOL_TRACE=true
 ```
 
-本地小模型的工具选择能力通常弱于较大的在线模型。如果出现工具参数不稳定，优先使用 DeepSeek 在线模型完成学习和调试。
+Ollama must already be running and the selected model must produce actual tool calls; installing a local model does not by itself establish that capability. `MAX_TOOL_ROUNDS` accepts values from 1 to 20. If the limit is reached, inspect the tool trace and model behavior before increasing it.
 
-## 4. 启动项目
+## Run
 
-进入交互模式：
-
-```cmd
+```powershell
 python main.py
-```
-
-只提问一次：
-
-```cmd
 python main.py -q "计算 (123.5 + 20) * 3"
-```
-
-隐藏工具调用轨迹：
-
-```cmd
 python main.py --no-tool-trace
 ```
 
-## 5. 推荐测试问题
+Interactive commands:
 
-### 单工具调用
+- `/help`: show help.
+- `/tools`: list registered tools.
+- `/clear`: reset the current in-memory conversation.
+- `/exit`: quit.
+
+The interface and system instructions are Chinese. Try:
 
 ```text
-计算 (125.6 + 74.4) * 3
 把 2.5 千米换算成米
-2026-08-21 到 2026-10-01 相差多少天？
 现在上海是星期几、几点？
 查询杭州未来三天的天气
-```
-
-### 待办事项
-
-```text
-添加一个高优先级待办：8月30日前完成 LangChain Tools 复习
-列出我的未完成待办
-把 1 号待办标记为完成
-显示全部待办
-```
-
-待办数据保存在：
-
-```text
-data/todos.json
-```
-
-### 多工具调用
-
-```text
-查询杭州天气，并计算今天到 2026 年国庆节还有多少天
-添加一个明天到期的高优先级待办“复习 Tools”，然后列出未完成事项
+添加一个高优先级待办：复习 LangChain Tools，然后列出未完成事项
 现在上海几点？顺便把 10 英里换算成千米
 ```
 
-## 6. 交互命令
+## Local data and optional tracing
 
-```text
-/help   查看帮助
-/tools  查看所有已注册工具
-/clear  清空当前进程中的对话上下文
-/exit   退出
-```
+To-do items are stored in `data/todos.json`, created when needed. `TOOLBOX_DATA_DIR` can override the storage directory. `/clear` resets model messages only; it does not delete saved to-do items. This is local file storage, without a multi-user service or account separation.
 
-`/clear` 只清空模型消息列表，不会删除 `data/todos.json`。
+The model receives prompts and tool results. You can optionally enable LangSmith in `.env` to inspect messages, schemas, tool calls, and final responses:
 
-## 7. 运行测试
-
-安装开发依赖：
-
-```cmd
-pip install -r requirements-dev.txt
-```
-
-运行测试：
-
-```cmd
-pytest
-```
-
-测试不会访问大模型，也不会调用真实天气网络接口。待办测试使用 pytest 临时目录，不会污染正式数据。
-
-## 8. LangSmith 追踪
-
-在 `.env` 中启用：
-
-```env
+```dotenv
 LANGSMITH_TRACING=true
-LANGSMITH_API_KEY=你的LANGSMITH_API_KEY
+LANGSMITH_API_KEY=replace_with_your_private_key
 LANGSMITH_PROJECT=ai-productivity-toolbox
 ```
 
-运行项目后，可在 LangSmith 中观察：
+Tracing can upload conversation and tool data. Keep real keys and `.env` local; the template contains placeholders only.
 
-- 模型收到的 SystemMessage 和 HumanMessage
-- 工具 Schema
-- 模型生成的 `tool_calls`
-- 工具返回的 `ToolMessage`
-- 最终模型回答
+## Project structure
 
-## 9. 常见问题
-
-### 配置错误：必须设置 API Key
-
-确认 `.env` 位于项目根目录，并填写了：
-
-```env
-MODEL_API_KEY=...
+```text
+ai-productivity-toolbox/
+├── main.py                    # CLI and interactive commands
+├── toolbox/
+│   ├── assistant.py           # Model setup and manual tool loop
+│   ├── config.py              # Environment loading and validation
+│   ├── prompts.py             # Chinese system prompt
+│   └── tools.py               # Tools, input schemas, local storage
+├── data/                      # Runtime to-do storage
+├── tests/                     # Configuration, tools, assistant loop
+├── docs/PROJECT_GUIDE.md       # Detailed Chinese design/source guide
+├── .env.example
+├── requirements.txt
+├── requirements-dev.txt
+└── pyproject.toml
 ```
 
-或者：
+## Provided checks
 
-```env
-DEEPSEEK_API_KEY=...
+```powershell
+python -m pip install -r requirements-dev.txt
+python -m pytest
 ```
 
-### 天气查询失败
+The tests cover calculator restrictions, dates, unit conversion, weather response handling, the to-do lifecycle, model configuration, and the manual tool loop. Weather calls and model responses are mocked; to-do tests use temporary directories and test tracing is disabled. This documentation update did not run tests or make live API calls.
 
-天气工具调用 Open-Meteo 公共 API，不需要 Key，但需要能访问互联网。网络异常时工具会重试三次，然后将错误作为字符串交给模型，不会让整个工具循环崩溃。
+## Troubleshooting and current limits
 
-### 模型一直调用工具
+- Missing key: check `MODEL_API_KEY` or `DEEPSEEK_API_KEY` in the root `.env`, then restart.
+- Weather failure: Open-Meteo requires network access but no weather key. Timeouts and network errors are retried up to three attempts, then returned as a tool error.
+- Ollama connection failure: check that the service is running and `MODEL_BASE_URL` points to it. The default local address is `http://localhost:11434`.
+- Repeated calls or incorrect parameters: inspect the trace, tool descriptions, and chosen model. A successful local unit test does not establish live model reliability.
+- Conversation history ends with the process. File-backed to-do storage is separate from model memory; RAG, persistent chat memory, and a web interface are not implemented.
 
-项目通过 `MAX_TOOL_ROUNDS` 限制最大轮数，默认 6。不要为了“解决”循环而把它设得很大，应使用 LangSmith 检查工具描述和模型返回参数。
+## Learning context and license
 
-### Ollama 连接失败
-
-检查：
-
-```cmd
-D:\ollama\ollama.exe list
-curl http://localhost:11434/api/tags
-```
-
-并确认 `.env` 中的地址为：
-
-```env
-MODEL_BASE_URL=http://localhost:11434
-```
+See the [project guide](docs/PROJECT_GUIDE.md) for the full message flow, source walkthrough, and follow-on exercises from the LangChain course. The project retains the [MIT License](LICENSE) and `AI Productivity Toolbox contributors` copyright notice.
